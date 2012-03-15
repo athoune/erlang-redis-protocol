@@ -30,25 +30,18 @@ start_link(ListenerPid, Socket, Transport, Options) ->
 
 %% @private Handle a new connection.
 handle(_ListenterPid, Socket, Transport, _Options) ->
-    %% Wait for the acceptor to hand over the connection.
-    %receive shoot -> ok after 500 -> io:format("exiting~n"), exit(nosocket) end,
-    ok = Transport:setopts(Socket, [binary, {active, true}]), %% TODO check options
-    %ok = Transport:send(Socket, <<"Who are you?\n">>),
     Parser = eredis_parser:init(),
-
     read_line(#connection{socket= Socket, transport=Transport}, Parser, <<>>),
     Transport:close(Socket).
 
-read_line(#connection{socket=Socket} = Connection, Parser, Rest) ->
-    io:format("je read une ligne ~p~n", [Socket]),
+read_line(#connection{socket=Socket, transport=Transport} = Connection, Parser, Rest) ->
+    ok = Transport:setopts(Socket, [binary, {active, once}]), %% TODO check options
     Line = receive {tcp, Socket, ILine} ->
-        io:format("la ligne : ~p~n", [ILine]),
         ILine
     after 30000 ->
         exit(timeout)
     end,
-    P = parse(Connection, Parser, <<Rest/binary, Line/binary>>),
-    case P of
+    case parse(Connection, Parser, <<Rest/binary, Line/binary>>) of
         {ok, ConnectionState, NewState} ->
             read_line(Connection#connection{state=ConnectionState}, NewState, <<>>);
         {continue, NewState} -> read_line(Connection, NewState, Rest);
