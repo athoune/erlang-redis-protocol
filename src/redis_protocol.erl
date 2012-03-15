@@ -8,6 +8,12 @@
 
 %%-include_lib("eredis/include/eredis.hrl").
 
+-record(connection, {
+    socket,
+    transport,
+    state = []
+    }).
+
 %% @doc Start the redis_protocol server.
 start(Port) ->
     ok = application:start(cowboy),
@@ -26,31 +32,37 @@ start_link(ListenerPid, Socket, Transport, Options) ->
 handle(_ListenterPid, Socket, Transport, _Options) ->
     %% Wait for the acceptor to hand over the connection.
     %receive shoot -> ok after 500 -> io:format("exiting~n"), exit(nosocket) end,
-    ok = Transport:setopts(Socket, [binary, {active, once}]), %%{packet, line}
+    ok = Transport:setopts(Socket, [binary, {active, true}]), %% TODO check options
     %ok = Transport:send(Socket, <<"Who are you?\n">>),
     Parser = eredis_parser:init(),
 
-    read_line(Socket, Transport, Parser, <<>>),
+    read_line(#connection{socket= Socket, transport=Transport}, Parser, <<>>),
     Transport:close(Socket).
 
-read_line(Socket, Transport, Parser, Rest) ->
-    Line = receive {tcp, Socket, ILine} -> ILine after 10000 -> exit(timeout) end,
-    io:format("Line ~s~n", [binary_to_list(Line)]),
-    P = parse(Socket, Transport, Parser, <<Rest/binary, Line/binary>>),
-    io:format("Parse : ~p~n", [P]),
+read_line(#connection{socket=Socket} = Connection, Parser, Rest) ->
+    io:format("je read une ligne ~p~n", [Socket]),
+    Line = receive {tcp, Socket, ILine} ->
+        io:format("la ligne : ~p~n", [ILine]),
+        ILine
+    after 30000 ->
+        exit(timeout)
+    end,
+    P = parse(Connection, Parser, <<Rest/binary, Line/binary>>),
     case P of
-        {ok, NewState} -> read_line(Socket, Transport, NewState, <<>>);
-        {continue, NewState} -> read_line(Socket, Transport, NewState, Rest)
+        {ok, ConnectionState, NewState} ->
+            read_line(Connection#connection{state=ConnectionState}, NewState, <<>>);
+        {continue, NewState} -> read_line(Connection, NewState, Rest);
+        _ -> io:format("Oups le readline.")
     end.
 
-parse(Socket, Transport, State, Data) ->
+parse(Connection, State, Data) ->
     case eredis_parser:parse(State, Data) of
         {ok, Return, NewParserState} ->
-            action(Socket, Transport, Return),
-            {ok, NewParserState};
+            {ok, ConnectionState} = action(Connection, Return),
+            {ok, ConnectionState, NewParserState};
         {ok, Return, Rest, NewParserState} ->
-            action(Socket, Transport, Return),
-            parse(Socket, Transport, NewParserState, Rest);
+            {ok, ConnectionState} = action(Connection, Return),
+            parse(Connection#connection{state=ConnectionState}, NewParserState, Rest);
         {continue, NewParserState} ->
             {continue, NewParserState};
         Error ->
@@ -58,8 +70,8 @@ parse(Socket, Transport, State, Data) ->
             {error, Error}
     end.
 
-action(Socket, Transport, Action) ->
+action(#connection{socket = Socket, transport=Transport, state=State}, Action) ->
     io:format("Action ~p~n", [Action]),
-    %% FIXME should write a response to the socket
+    io:format("State ~p~n", [State]),
     ok = Transport:send(Socket,<<"+OK\r\n">>),
-    ok.
+    {ok, [Action | State]}.
