@@ -1,49 +1,54 @@
 -module(redis_protocol).
 %% exported functions
--export([start/1, start/2]).
+-export([start/2, start/3]).
 %% cowboy callbacks
 -export([start_link/4]).
 %% private functions
--export([handle/4]).
-
-%%-include_lib("eredis/include/eredis.hrl").
+-export([handle_new_connection/5]).
+%% behavior
+-export([behaviour_info/1]).
 
 -record(connection, {
     socket,
     transport,
     state,
-    options = []
+    options = [],
+    module
     }).
 
 %% @doc Start the redis_protocol server.
-start(Port) ->
-    start(Port, []).
+start(Port, Mod) ->
+    start(Port, Mod, []).
 
 %% Options
 %%  timeout, default 30000 (30 seconds) connection timeout
 %%  state, [], default state
-start(Port, Options) ->
+start(Port, Mod, Options) ->
     ok = application:start(cowboy),
     {ok, _} = cowboy:start_listener(
         ?MODULE, 10,
         cowboy_tcp_transport, [{port, Port}],
-        ?MODULE, Options),
+        ?MODULE, {Mod, Options}),
     ok.
 
+behaviour_info(callbacks) -> [{handle, 4}];
+behaviour_info(_) -> undefined.
+
 %% @private Spawn a process to handle a new connection.
-start_link(ListenerPid, Socket, Transport, Options) ->
-    Pid = spawn_link(?MODULE, handle, [ListenerPid, Socket, Transport, Options]),
+start_link(ListenerPid, Socket, Transport, {Mod, Options}) ->
+    Pid = spawn_link(?MODULE, handle_new_connection, [ListenerPid, Socket, Transport, Mod, Options]),
     {ok, Pid}.
 
 %% @private Handle a new connection.
-handle(_ListenterPid, Socket, Transport, Options) ->
+handle_new_connection(_ListenterPid, Socket, Transport, Mod, Options) ->
     Parser = eredis_parser:init(),
     State = proplists:get_value(state, Options, []), %% FIXME handle when state is a function
     read_line(#connection{
         socket = Socket,
         transport = Transport,
         options = Options,
-        state = State}, Parser, <<>>),
+        state = State,
+        module = Mod}, Parser, <<>>),
     Transport:close(Socket).
 
 read_line(#connection{socket=Socket, transport=Transport, options=Options} = Connection, Parser, Rest) ->
@@ -61,13 +66,13 @@ read_line(#connection{socket=Socket, transport=Transport, options=Options} = Con
         _ -> io:format("Oups le readline.")
     end.
 
-parse(Connection, State, Data) ->
+parse(#connection{socket = Socket, transport=Transport, state=HandleState, module=Mod} = Connection, State, Data) ->
     case eredis_parser:parse(State, Data) of
         {ok, Return, NewParserState} ->
-            {ok, ConnectionState} = action(Connection, Return),
+            {ok, ConnectionState} = Mod:handle(Socket, Transport, HandleState, Return),
             {ok, ConnectionState, NewParserState};
         {ok, Return, Rest, NewParserState} ->
-            {ok, ConnectionState} = action(Connection, Return),
+            {ok, ConnectionState} = Mod:handle(Socket, Transport, HandleState, Return),
             parse(Connection#connection{state=ConnectionState}, NewParserState, Rest);
         {continue, NewParserState} ->
             {continue, NewParserState};
@@ -75,10 +80,3 @@ parse(Connection, State, Data) ->
             io:format("Error ~p~n", [Error]),
             {error, Error}
     end.
-
-
-action(#connection{socket = Socket, transport=Transport, state=State}, Action) ->
-    io:format("Action ~p~n", [Action]),
-    io:format("State ~p~n", [State]),
-    ok = Transport:send(Socket,<<"+OK\r\n">>),
-    {ok, [Action | State]}.
