@@ -8,6 +8,9 @@
 %% behavior
 -export([behaviour_info/1]).
 
+%% helper
+-export([answer/2]).
+
 -record(connection, {
     socket,
     transport,
@@ -31,7 +34,7 @@ start(Port, Mod, Options) ->
         ?MODULE, {Mod, Options}),
     ok.
 
-behaviour_info(callbacks) -> [{handle, 4}];
+behaviour_info(callbacks) -> [{handle, 3}];
 behaviour_info(_) -> undefined.
 
 %% @private Spawn a process to handle a new connection.
@@ -69,10 +72,10 @@ read_line(#connection{socket=Socket, transport=Transport, options=Options} = Con
 parse(#connection{socket = Socket, transport=Transport, state=HandleState, module=Mod} = Connection, State, Data) ->
     case eredis_parser:parse(State, Data) of
         {ok, Return, NewParserState} ->
-            {ok, ConnectionState} = Mod:handle(Socket, Transport, HandleState, Return),
+            {ok, ConnectionState} = Mod:handle({Socket, Transport}, HandleState, Return),
             {ok, ConnectionState, NewParserState};
         {ok, Return, Rest, NewParserState} ->
-            {ok, ConnectionState} = Mod:handle(Socket, Transport, HandleState, Return),
+            {ok, ConnectionState} = Mod:handle({Socket, Transport}, HandleState, Return),
             parse(Connection#connection{state=ConnectionState}, NewParserState, Rest);
         {continue, NewParserState} ->
             {continue, NewParserState};
@@ -80,3 +83,6 @@ parse(#connection{socket = Socket, transport=Transport, state=HandleState, modul
             io:format("Error ~p~n", [Error]),
             {error, Error}
     end.
+
+answer({Socket, Transport}, Answer) ->
+    Transport:send(Socket, redis_protocol_encoder:encode(Answer)).

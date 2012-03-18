@@ -3,13 +3,13 @@
 
 -export([start/0]).
 
--export([handle/4]).
+-export([handle/3]).
 
 start() ->
     redis_protocol:start(6379, ?MODULE).
 
-handle(Socket, Transport, State, Action) ->
+handle(Connection, State, Action) ->
     io:format("Action ~p~n", [Action]),
     io:format("State ~p~n", [State]),
-    ok = Transport:send(Socket,<<"+OK\r\n">>),
+    ok = redis_protocol:answer(Connection, ok),
     {ok, [Action | State]}.

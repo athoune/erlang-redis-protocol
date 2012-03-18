@@ -39,10 +39,10 @@ start() ->
 %%  * You need Transport and Socket to answer.
 %%  * State is used for every messages in this conection, you can modify it
 %% Action is a binary list with redis like command
-handle(Socket, Transport, State, Action) ->
+handle(Connection, State, Action) ->
     io:format("Action ~p~n", [Action]),
     io:format("State ~p~n", [State]),
-    ok = Transport:send(Socket,<<"+OK\r\n">>),
+    ok = redis_protocol:answer(Connection, ok),
     {ok, [Action | State]}.
 ```
 
