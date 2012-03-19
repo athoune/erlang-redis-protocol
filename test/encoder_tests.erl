@@ -13,3 +13,9 @@ int_test() ->
 
 error_test() ->
     ?assertEqual(<<"-Argh\r\n">>, encode({error, <<"Argh">>})).
+
+bulk_test() ->
+    ?assertEqual(<<"$3\r\nfoo\r\n">>, encode(<<"foo">>)).
+
+multi_bulk_test() ->
+    ?assertEqual(<<"*2\r\n$5\r\nhello\r\n$5\r\nworld\r\n">>, encode([<<"hello">>, <<"world">>])).
