@@ -10,6 +10,5 @@ start() ->
 
 handle(Connection, State, Action) ->
     io:format("Action ~p~n", [Action]),
-    io:format("State ~p~n", [State]),
     ok = redis_protocol:answer(Connection, ok),
     {ok, [Action | State]}.
