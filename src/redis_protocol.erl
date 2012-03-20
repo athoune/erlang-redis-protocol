@@ -19,6 +19,8 @@
     module
     }).
 
+-include_lib("eredis/include/eredis.hrl").
+
 %% @doc Start the redis_protocol server.
 start(Port, Mod) ->
     start(Port, Mod, []).
@@ -66,7 +68,7 @@ read_line(#connection{socket=Socket, transport=Transport, options=Options} = Con
         {ok, ConnectionState, NewState} ->
             read_line(Connection#connection{state=ConnectionState}, NewState, <<>>);
         {continue, NewState} -> read_line(Connection, NewState, Rest);
-        _ -> io:format("Oups le readline.")
+        Oups -> io:format("Oups le readline. : ~p~p~n", [Oups, Line])
     end.
 
 parse(#connection{socket = Socket, transport=Transport, state=HandleState, module=Mod} = Connection, State, Data) ->
@@ -79,6 +81,20 @@ parse(#connection{socket = Socket, transport=Transport, state=HandleState, modul
             parse(Connection#connection{state=ConnectionState}, NewParserState, Rest);
         {continue, NewParserState} ->
             {continue, NewParserState};
+        {error,unknown_response} -> %% Handling painful old syntax, without prefix
+            case get_newline_pos(Data) of
+                undefined ->
+                    {continue, State};
+                Pos ->
+                    <<Value:Pos/binary, ?NL, Rest/binary>> = Data,
+                    {ok, ConnectionState} = Mod:handle({Socket, Transport}, State, binary:split(Value, <<$ >>)),
+                    case Rest of
+                        <<>> ->
+                            {ok, ConnectionState, State};
+                        _ ->
+                            parse(Connection#connection{state=ConnectionState}, State, Rest)
+                    end
+            end;
         Error ->
             io:format("Error ~p~n", [Error]),
             {error, Error}
@@ -86,3 +102,10 @@ parse(#connection{socket = Socket, transport=Transport, state=HandleState, modul
 
 answer({Socket, Transport}, Answer) ->
     Transport:send(Socket, redis_protocol_encoder:encode(Answer)).
+
+
+get_newline_pos(B) ->
+    case re:run(B, ?NL) of
+        {match, [{Pos, _}]} -> Pos;
+        nomatch -> undefined
+    end.
